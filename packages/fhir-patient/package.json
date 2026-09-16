@@ -13,7 +13,7 @@
   },
   "scripts": {
     "build": "pnpm clean && build-adaptor fhir-patient",
-    "test": "mocha --experimental-specifier-resolution=node --no-warnings",
+    "test": "TS_NODE_TRANSPILE_ONLY=true mocha --experimental-specifier-resolution=node --no-warnings --loader=ts-node/esm test/**/*.test.ts",
     "test:watch": "mocha -w --experimental-specifier-resolution=node --no-warnings",
     "clean": "rimraf dist types docs",
     "pack": "pnpm pack --pack-destination ../../dist",
@@ -31,10 +31,12 @@
     "@openfn/language-common": "workspace:*"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.10",
     "assertion-error": "2.0.0",
     "chai": "4.3.6",
     "deep-eql": "4.1.1",
     "rimraf": "3.0.2",
+    "ts-node": "^10.9.2",
     "undici": "^7.19.2"
   },
   "repository": {
