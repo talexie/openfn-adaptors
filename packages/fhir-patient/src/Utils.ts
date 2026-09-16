@@ -375,11 +375,16 @@ export const sleep = (ms: number): Promise<void> => {
 export const toIsoFormat = (value: string | Date): string => {
   return value instanceof Date ? value.toISOString() : value;
 }
-
+/**
+ * 
+ * @param bucket 
+ * @param file 
+ */
 export const streamFileToS3 =(bucket: string, file: ExportFile)=>{
-  put({
+  /*put({
       bucket, 
       key: file.url
   })
+      */
 }
 
