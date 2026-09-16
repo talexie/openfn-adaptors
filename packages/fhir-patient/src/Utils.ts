@@ -6,6 +6,7 @@ import {
   logResponse,
   throwError
 } from '@openfn/language-common/util';
+import put from '@openfn/language-aws-s3';
 
 import nodepath from 'node:path';
 import readline from 'node:readline';
@@ -80,6 +81,10 @@ export interface PollOptions extends RequestOptions{
    * Resources per write to the Collection. Default 500. 
    */
   batchSize?: number;
+  /**
+   * Enable streaming data to s3 bucket
+   */
+  s3?: boolean
 }
 
 /**
@@ -369,5 +374,12 @@ export const sleep = (ms: number): Promise<void> => {
 // TODO use openFn dateFns utility
 export const toIsoFormat = (value: string | Date): string => {
   return value instanceof Date ? value.toISOString() : value;
+}
+
+export const streamFileToS3 =(bucket: string, file: ExportFile)=>{
+  put({
+      bucket, 
+      key: file.url
+  })
 }
 

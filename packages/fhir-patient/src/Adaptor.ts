@@ -12,6 +12,7 @@ import {
   prepareNextState,
   RequestOptions,
   sleep,
+  streamFileToS3,
   toIsoFormat,
   toManifest,
   request as utilRequest 
@@ -132,7 +133,15 @@ export function downloadResource (
     const { manifest, response } = await pollRequest(state, statusUrl, resolvedOptions);
     const { resources, issues } = await collectRequest(state, manifest, resolvedOptions);
     const nextState = prepareNextState(state, response);
-    
+    if(options.s3){
+      manifest.output.forEach((file)=>{
+        streamFileToS3( 
+          state.configuration.bucket, 
+          file
+        )
+        });
+      }
+
     nextState.manifest = manifest;
     nextState.data = resources;
     if (issues.length) nextState.issues = issues;
