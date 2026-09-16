@@ -1,14 +1,22 @@
 import { expect } from 'chai';
 
-import { request, dataValue, get, downloadResource } from '../src/Adaptor.js';
+import { request, dataValue, get, downloadResource, collectRequest } from '../src/Adaptor.js';
 import { testFixtures } from './Fixtures.js';
 import { fileOrigin, requestConfig, testFileServer, testServer } from './MockClient.js';
+import { collections } from '@openfn/language-collections';
 
 const apiPath = requestConfig.apiPath;
 const baseUrl = requestConfig.baseUrl;
 
+const collectionsServer = collections.createMockServer('https://app.openfn.org');
+collections.setMockClient(collectionsServer);
+ 
+const COLLECTION = 'fhir-export-patient-buffer';
+
 const state = {
-  configuration: requestConfig
+  configuration: requestConfig,
+  collections_endpoint: 'https://app.openfn.org/collections',
+  collections_token: 'collections-token'
 }
 const exportPath = (path: string) => (p: string) => p.startsWith(`/${apiPath}/${path}`);
 
@@ -26,6 +34,24 @@ const manifest = (extra = {}) => ({
   error: [],
   ...extra,
 });
+
+const mockFiles = () => {
+  const seen: any[] = [];
+  const files: [number, object[]][] = [
+    [1, [patient('p1'), patient('p2'), patient('p3'), patient('p4')]],
+    [2, [patient('p5'), patient('p6')]],
+  ];
+  for (const [n, resources] of files) {
+    testFileServer
+      .intercept({ path: `/bulk/patients-${n}.ndjson`, method: 'GET' })
+      .reply(200, (req: any) => {
+        seen.push(req);
+        return ndjson(resources);
+      }, { headers: { 'content-type': 'application/fhir+ndjson' } })
+      .persist();
+  }
+  return seen;
+};
 
 /** 
  * Kick-off the pending FHIR bulk export 202 polls, then the manifest. 
@@ -112,7 +138,7 @@ describe('download patient resource', () => {
       pollInterval: 1 
     })(state);
  
-    expect(finalState.resources.map((r: any) => r.id)).to.eql(['p1', 'p2', 'p3']);
+    expect(finalState.data.map((r: any) => r.id)).to.eql(['p1', 'p2', 'p3']);
     expect(finalState.manifest.transactionTime).to.eql('2026-09-11T00:00:00Z');
     expect(finalState.references).to.have.lengthOf(1); // previous state.data kept
   });
@@ -200,5 +226,33 @@ describe('Adaptor request', () => {
     });
     expect(error.statusCode).to.eql(404);
     expect(error.statusMessage).to.eql('Not Found');
+  });
+});
+
+describe('collectRequest with an OpenFn collections buffer', () => {
+  before(() => {
+    collectionsServer.api.createCollection(null, COLLECTION, {});
+  });
+
+  afterEach(async () => {
+    testFileServer.cleanMocks();
+    await collections.remove(COLLECTION, '*')(state);
+  });
+ 
+  it('writes resources to the collection instead of into state', async () => {
+    mockFiles();
+ 
+    const result = await collectRequest(state, manifest(), { collection: COLLECTION, batchSize: 2 });
+ 
+    expect(result.collection).to.eql(COLLECTION);
+    expect(result.count).to.eql(6);
+    expect(result.resources).to.eql([]); 
+
+    const keys: string[] = [];
+    await collections.each(COLLECTION, '*', (_s: any, _value: any, key: string) => {
+      keys.push(key);
+    })(state);
+ 
+    expect(keys.sort()).to.eql(['patient:p1', 'patient:p2', 'patient:p3', 'patient:p4', 'patient:p5', 'patient:p6']);
   });
 });

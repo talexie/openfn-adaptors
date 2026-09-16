@@ -1,6 +1,84 @@
 {
   "operations": [
     {
+      "name": "downloadResource",
+      "params": [
+        "path",
+        "params",
+        "options"
+      ],
+      "docs": {
+        "description": "Download every resource of a type from a FHIR server using Bulk Data `$export`.\n\nThe export is asynchronous: this kicks it off, polls until the server has written\nits NDJSON files, then downloads and parses them. See the\n{@link https://build.fhir.org/ig/HL7/bulk-data/en/export.html Bulk Data Access IG}.\n\nResources are held in memory. For large populations, narrow the export with `since`\nor `types`, cap it with `max`, or buffer it with `collection`.",
+        "tags": [
+          {
+            "title": "public",
+            "description": null,
+            "type": null
+          },
+          {
+            "title": "function",
+            "description": null,
+            "name": null
+          },
+          {
+            "title": "param",
+            "description": "The resource to export, eg `Patient` or `Group/[id]`. Default: `Patient`.",
+            "type": {
+              "type": "NameExpression",
+              "name": "string"
+            },
+            "name": "path"
+          },
+          {
+            "title": "param",
+            "description": "FHIR bulk export parameters.",
+            "type": {
+              "type": "NameExpression",
+              "name": "ExportOptions"
+            },
+            "name": "params"
+          },
+          {
+            "title": "param",
+            "description": "Polling and download options.",
+            "type": {
+              "type": "NameExpression",
+              "name": "PollOptions"
+            },
+            "name": "options"
+          },
+          {
+            "title": "state",
+            "description": "{FhirExportState}"
+          },
+          {
+            "title": "returns",
+            "description": null,
+            "type": {
+              "type": "NameExpression",
+              "name": "Operation"
+            }
+          },
+          {
+            "title": "example",
+            "description": "downloadResource('Patient');",
+            "caption": "Download every patient"
+          },
+          {
+            "title": "example",
+            "description": "downloadResource('Patient', { since: $.cursor, types: ['Patient', 'Immunization'] });",
+            "caption": "Download only what changed since the last run"
+          },
+          {
+            "title": "example",
+            "description": "downloadResource('Group/measles-campaign', {}, { collection: 'fhir-export-buffer' });",
+            "caption": "Export one group, buffering into a collection"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
       "name": "get",
       "params": [
         "path",
@@ -11,7 +89,8 @@
         "tags": [
           {
             "title": "example",
-            "description": "get(\"patients\");"
+            "description": "get(\"Patient\");",
+            "caption": "Make a GET request to FHIR Server"
           },
           {
             "title": "function",
@@ -69,7 +148,8 @@
         "tags": [
           {
             "title": "example",
-            "description": "post(\"patient\", { \"name\": \"Bukayo\" });"
+            "description": "post(\"Patient\", { \"name\": \"Bukayo\" });",
+            "caption": "Make a POST request to FHIR Server"
           },
           {
             "title": "function",
@@ -137,7 +217,8 @@
         "tags": [
           {
             "title": "example",
-            "description": "request(\"POST\", \"patient\", { \"name\": \"Bukayo\" });"
+            "description": "request(\n \"GET\", \"Patient\", null }\n);",
+            "caption": "Make a generic GET request to FHIR Server"
           },
           {
             "title": "function",

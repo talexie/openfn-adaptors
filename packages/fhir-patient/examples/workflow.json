@@ -1,0 +1,12 @@
+{
+    "workflow": {
+        "steps":[
+            {
+                "id": "downloadPatient",
+                "expression":"downloadPatient.js",
+                "adaptor": "fhir-patient",
+                "configuration": "../tmp/fhir-cred.json"
+            }
+        ]
+    }
+}

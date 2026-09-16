@@ -29,3 +29,10 @@ Run tests using `pnpm run test` or `pnpm run test:watch`
 Build the project using `pnpm build`.
 
 To build _only_ the docs run `pnpm build docs`.
+
+## Examples
+- Create a tmp folder in the folder packages/fhir-patient and add file "fhir-cred.json"
+- Run this command
+ ```
+ openfn examples/workflow.json -m -o tmp/output.json
+ ```

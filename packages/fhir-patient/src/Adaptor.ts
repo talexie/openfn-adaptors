@@ -8,6 +8,7 @@ import {
   ExportManifest,
   ManifestResponse,
   parseNdJson,
+  PollOptions,
   prepareNextState,
   RequestOptions,
   sleep,
@@ -16,6 +17,7 @@ import {
   request as utilRequest 
 } from './Utils.js';
 import { DEFAULT_POLL_INTERVAL, DEFAULT_POLL_TIMEOUT, NDJSON } from './Constants.js';
+import { collections } from '@openfn/language-collections';
 
 /**
  * State object
@@ -40,20 +42,41 @@ import { DEFAULT_POLL_INTERVAL, DEFAULT_POLL_TIMEOUT, NDJSON } from './Constants
  */
 
 /**
- * @interface PollOptions - FHIR bulk export polling options
+ * Bulk export parameters, sent to the FHIR server when the export is kicked off.
+ * @typedef {Object} ExportOptions
+ * @public
+ * @property {string} since - Only include resources changed at or after this instant (FHIR `_since`).
+ * @property {string[]} types - Resource types to include (FHIR `_type`), eg `['Patient', 'Immunization']`.
+ * @property {string[]} elements - Only include these elements (FHIR `_elements`), eg `['Patient.id']`.
+ * @property {string[]} typeFilter - Search expressions narrowing a type (FHIR `_typeFilter`), eg `['Patient?gender=female']`.
+ * @property {string} outputFormat - The file format to request. Default: `application/fhir+ndjson`.
  */
-export interface PollOptions extends RequestOptions{
-  /** Milliseconds between status polls when the server sends no `Retry-After`. Default 5000. */
-  pollInterval?: number;
-  /** Give up waiting after this many milliseconds. Default 1800000 (30 minutes). */
-  pollTimeout?: number;
-  /** Only download files of these resource types. Default: all of them. */
-  types?: string[];
-  /** Stop after this many resources. Everything downloaded is held in state, so cap large exports. */
-  max?: number;
-  /** Also download the server's error files into `state.issues`. Default true. */
-  includeErrors?: boolean;
-}
+ 
+/**
+ * Options controlling how the export is polled and downloaded.
+ * @typedef {Object} PollOptions
+ * @public
+ * @property {number} pollInterval - Milliseconds between status polls when the server sends no `Retry-After`. Default: 5000.
+ * @property {number} pollTimeout - Give up waiting after this many milliseconds. Default: 1800000 (30 minutes).
+ * @property {string[]} types - Only download files of these resource types.
+ * @property {number} max - Stop after this many resources.
+ * @property {boolean} includeErrors - Download the server's error files too. Default: true.
+ * @property {string} collection - Buffer resources into this OpenFn collection instead of holding them in state.
+ * @property {object} headers - An object of headers to append to each request.
+ * @property {number} timeout - Request timeout in ms.
+ */
+
+/**
+ * State object
+ * @typedef {Object} FhirExportState
+ * @private
+ * @property data - the exported resources, as an array
+ * @property response - the final response from the FHIR server, including headers, statusCode and body
+ * @property manifest - the server's export manifest, including `transactionTime` and the list of files
+ * @property statusUrl - the export's status URL, which can be polled again later
+ * @property issues - OperationOutcomes for records the server could not export
+ * @property references - an array of all previous data objects used in the Job
+ **/
 
 /**
  * @interface ExportOptions - FHIR bulk export parameters
@@ -72,24 +95,34 @@ export interface ExportOptions {
   outputFormat?: string;
 };
 
-
 /**
- * Download FHIR resource request e.g Patient
- * @example <caption> Download FHIR resource from FHIR Server </caption>
- * downloadResource("Patient");
- * @function
+ * Download every resource of a type from a FHIR server using Bulk Data `$export`.
+ *
+ * The export is asynchronous: this kicks it off, polls until the server has written
+ * its NDJSON files, then downloads and parses them. See the
+ * {@link https://build.fhir.org/ig/HL7/bulk-data/en/export.html Bulk Data Access IG}.
+ *
+ * Resources are held in memory. For large populations, narrow the export with `since`
+ * or `types`, cap it with `max`, or buffer it with `collection`.
  * @public
- * @param {string} path - Path to resource, defaults to Patient
- * @param {RequestOptions} options - Optional request options
+ * @function
+ * @param {string} path - The resource to export, eg `Patient` or `Group/[id]`. Default: `Patient`.
+ * @param {ExportOptions} params - FHIR bulk export parameters.
+ * @param {PollOptions} options - Polling and download options.
+ * @state {FhirExportState}
  * @returns {Operation}
- * @state {HttpState}
- * @link https://build.fhir.org/ig/HL7/bulk-data/en/export.html
+ * @example <caption>Download every patient</caption>
+ * downloadResource('Patient');
+ * @example <caption>Download only what changed since the last run</caption>
+ * downloadResource('Patient', { since: $.cursor, types: ['Patient', 'Immunization'] });
+ * @example <caption>Export one group, buffering into a collection</caption>
+ * downloadResource('Group/measles-campaign', {}, { collection: 'fhir-export-buffer' });
  */
-export const downloadResource = (
+export function downloadResource (
   path: string = 'Patient', 
   params: ExportOptions = {},
   options: PollOptions = {}
-) => {
+) {
   return async (state: any) => {
     const [resolvedPath, resolvedOptions] =
       expandReferences(state, path, options);
@@ -101,7 +134,7 @@ export const downloadResource = (
     const nextState = prepareNextState(state, response);
     
     nextState.manifest = manifest;
-    nextState.resources = resources;
+    nextState.data = resources;
     if (issues.length) nextState.issues = issues;
 
     return nextState;
@@ -111,20 +144,20 @@ export const downloadResource = (
  * Kick-off request for FHIR Asynchronous Bulk Export
  * @private
  * @function
- * @param {string} path 
- * @param {any} state 
- * @param params 
- * @param options 
+ * @param {string} path - Path to the FHIR resource e.g Patient
+ * @param {any} state - HttpState
+ * @param {Object} params  - FHIR bulk $export parameters
+ * @param {ExportOptions } options  - Bulk export parameters, sent to the FHIR server when the export is kicked off.
  * @returns Promise<string>
  * @link https://build.fhir.org/ig/HL7/bulk-data/en/async.html
  */
 
-export const kickOffRequest = async (
+export async function kickOffRequest (
   path: string = 'Patient', 
   state: any,
   params: Record<string,any> = {},
   options: ExportOptions & RequestOptions = {}
-): Promise<string> => {
+): Promise<string>  {
     const { headers = {}, query ={}, ...rest } = options;
     const { since, types, elements, typeFilter, outputFormat = NDJSON } = params;
     const modifiedOptions = { 
@@ -138,9 +171,9 @@ export const kickOffRequest = async (
         ...query
       },
       headers:{
-        Accept: 'application/fhir+json',
-        Prefer: 'respond-async',
         ...headers,
+        Accept: 'application/fhir+json',
+        Prefer: 'respond-async'
       }
     }
     
@@ -162,16 +195,18 @@ export const kickOffRequest = async (
 
 /**
  * Poll the FHIR bulk export status URL until the server returns a manifest
- * @param state 
- * @param statusUrl 
- * @param options 
- * @returns 
+ * @private
+ * @function
+ * @param state - HttpState
+ * @param statusUrl - FHIR server status content location after kickoff request
+ * @param options -  FHIR bulk $export polling and download options.
+ * @returns Promise<ManifestResponse>
  */
-export const pollRequest = async (
+export async function pollRequest (
   state: any, 
   statusUrl: string, 
   options: PollOptions = {}
-): Promise<ManifestResponse> => {
+): Promise<ManifestResponse> {
   const { 
     pollInterval = DEFAULT_POLL_INTERVAL, 
     pollTimeout = DEFAULT_POLL_TIMEOUT 
@@ -180,7 +215,9 @@ export const pollRequest = async (
 
    for (;;) {
     const response = await absoluteRequest('GET', statusUrl, state.configuration, {
-      headers: { Accept: 'application/fhir+json' },
+      headers: { 
+        Accept: 'application/fhir+json',
+      },
       errors: { 202: false },
     });
     
@@ -204,33 +241,62 @@ export const pollRequest = async (
 
 /**
  * Download and parse the FHIR NDJSON files listed in the manifest
- * @param state 
- * @param manifest 
- * @param options 
- * @returns 
+ * @private
+ * @function
+ * @param {any} state - HttpState
+ * @param {ExportManifest} manifest - FHIR bulk $export file manifest options.
+ * @param {PollOptions} options  - FHIR bulk $export polling and download options.
+ * @returns {Operation}
  */
-export const collectRequest = async (
+export async function collectRequest (
   state: any, 
   manifest: ExportManifest, 
   options: PollOptions = {}
-) => {
-  const { types, max = Infinity, includeErrors = true } = options;
+) {
+  const { 
+    types, 
+    max = Infinity, 
+    includeErrors = true,
+    collection,
+    batchSize = 500 
+  } = options;
+  const collectionName =
+    typeof collection === 'string'
+      ? collection
+      : collection
+        ? `fhir-export-${manifest.transactionTime || 'buffer'}`
+        : undefined;
  
   const resources: any[] = [];
+  let count = 0;
+
   for (const file of manifest.output) {
     if (types && !types.includes(file.type)) continue;
-    if (resources.length >= max) break;
+    if (count >= max) break;
+    
+    if (collectionName) {
+      // Straight from the socket to the Collection: nothing accumulates in state.
+      count += await streamToCollection(state, file,manifest, {
+        ...options,
+        collectionName,
+        batchSize,
+        max: max - count,
+      });
+    }
+    else{
  
-    for await (const resource of streamNdJsonFile(state, file, manifest, options)) {
-      resources.push(resource);
-      if (resources.length >= max) break;
+      for await (const resource of streamNdJsonFile(state, file, manifest, {
+        ...options, parseAs: 'stream'})) {
+        resources.push(resource);
+        if (++count >= max) break;
+      }
     }
   }
  
   const issues: any[] = [];
   if (includeErrors) {
     for (const file of manifest.error) {
-      for await (const issue of streamNdJsonFile(state, file, manifest, options)) issues.push(issue);
+      for await (const issue of streamNdJsonFile(state, file, manifest, {...options, parseAs: 'stream'})) issues.push(issue);
     }
     if (issues.length){
       throwError('NO_EXPORT_REPORTED',{
@@ -240,18 +306,69 @@ export const collectRequest = async (
     }
   }
  
-  return { resources, issues };
+  return collectionName ? { resources, issues, collection: collectionName, count } : { resources, issues, count };
 }
+
+/**
+ * Stream FHIR NDJSON file to openFn Collection for temporary storage since the files are big
+ * @private
+ * @function
+ * @param { any } state - The OpenFn state with configuration
+ * @param { ExportFile } file - FHIR bulk $export file manifest options
+ * @param { ExportManifest} manifest  - The FHIR bulk $export manifest
+ * @param { PollOptions } options - FHIR bulk $export polling and downloading options
+ * @returns Promise<number>
+ */
+export async function streamToCollection (
+  state: any,
+  file: ExportFile,
+  manifest: ExportManifest, 
+  options: PollOptions & { collectionName: string } = {
+    collectionName : 'fhir-export-patient-buffer',
+    batchSize: 500
+  }
+): Promise<number> {
+  
+  const { collectionName, batchSize = 500, max = Infinity } = options;
+  let batch: any[] = [];
+  let written = 0;
+  const fileType = file.type?.toLowerCase() || 'resource';
+
+  // Helper utility to flush accumulated data into the OpenFn Collection
+  const flushBatch = async () => {
+    if (!batch.length) return;
+    await collections.set(
+      collectionName,
+       (resource: any, _state: any, index: number) =>
+        // Keys like 'patient:DPW902300'
+        resource?.id ? `${fileType}:${resource.id}` : `${fileType}:${file.url.split('/').pop()}:${written + index}`,
+      batch
+    )(state);
+    written += batch.length;
+    batch = [];
+  };
+
+  for await (const resource of streamNdJsonFile(state, file, manifest, options)) {
+    batch.push(resource);
+    if (written + batch.length >= max) break;
+    if (batch.length >= batchSize) await flushBatch();
+  }
+
+  await flushBatch()
+  return written;
+};
+
 /**
  * Stream one FHIR NDJSON file, yielding a resource per line.
  * @private
  * @function
- * @param {any} state 
- * @param {ExportFile} file 
- * @param {ExportManifest} manifest 
- * @param {RequestOptions} options 
+ * @param {any} state - HttpState
+ * @param {ExportFile} file - FHIR bulk $export file manifest options
+ * @param {ExportManifest} manifest - The FHIR bulk $export manifest options
+ * @param {RequestOptions} options - Http request additional parameters
+ * @returns AsyncGenerator
  */
-export const streamNdJsonFile = async function* (
+export async  function* streamNdJsonFile (
   state: any, 
   file: ExportFile, 
   manifest: ExportManifest, 
@@ -259,7 +376,10 @@ export const streamNdJsonFile = async function* (
 ) {
    const response = await absoluteRequest('GET', file.url, state.configuration, {
     ...options,
-    headers: { Accept: NDJSON, ...options.headers },
+    headers: { 
+      ...options.headers,
+      Accept: NDJSON,      
+   },
     parseAs: 'stream',
     auth: manifest.requiresAccessToken === true,
   });
@@ -278,7 +398,7 @@ export const streamNdJsonFile = async function* (
  * @returns {Operation}
  * @state {HttpState}
  */
-export const get = (path: string , options: RequestOptions = {}) => {
+export function get (path: string , options: RequestOptions = {}) {
   return request('GET', path, null, options);
 }
 
@@ -294,7 +414,7 @@ export const get = (path: string , options: RequestOptions = {}) => {
  * @returns {Operation}
  * @state {HttpState}
  */
-export const post = (path: string , body: Record<string, any>, options: RequestOptions = {}) => {
+export function post (path: string , body: Record<string, any>, options: RequestOptions = {}) {
   return request('POST', path, body, options);
 }
 
@@ -313,12 +433,12 @@ export const post = (path: string , body: Record<string, any>, options: RequestO
  * @returns {Operation}
  * @state {HttpState}
  */
-export const request = (
+export function request (
   method: string, 
   path: string,
   body: Record<string,any> | null, 
   options: RequestOptions = {}
-) => {
+) {
   return async (state: any) => {
     const [resolvedMethod, resolvedPath, resolvedBody, resolvedoptions] =
       expandReferences(state, method, path, body, options);

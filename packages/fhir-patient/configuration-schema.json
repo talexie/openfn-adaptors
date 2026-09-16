@@ -47,6 +47,29 @@
       "description": "Password",
       "writeOnly": true,
       "examples": ["@some(!)Str0ngp4ss0w0rd"]
+    },
+    "collections_endpoint": {
+      "title": "Collections api endpoint",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The base URL (http://app.openfn.org)",
+      "format": "uri",
+      "minLength": 1,
+      "examples": ["https://app.openfn.org"],
+      "default": "https://app.openfn.org"
+    },
+    "collections_token": {
+      "title": "Access Token",
+      "type": "string",
+      "description": "Access token for the collection",
+      "writeOnly": true,
+      "examples": ["x.y.z"]
     }
   },
   "type": "object",

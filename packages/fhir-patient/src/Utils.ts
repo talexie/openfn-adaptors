@@ -45,7 +45,64 @@ export interface ExportFile {
   url: string;
   count?: number;
 }
+/**
+ * @interface PollOptions - FHIR bulk export polling options
+ */
+export interface PollOptions extends RequestOptions{
+  /** 
+   * Milliseconds between status polls when the server sends no `Retry-After`. Default 5000. 
+  */
+  pollInterval?: number;
+  /** 
+   * Waiting time in milliseconds. Default 1800000 (30 minutes). 
+   */
+  pollTimeout?: number;
+  /** 
+   * Only download files of these resource types. Default: all. 
+   */
+  types?: string[];
+  /** 
+   * Stop after this many resources. 
+   * Everything downloaded is held in state, so cap large exports. 
+   */
+  max?: number;
+  /** 
+   * Also download the server's error files into `state.issues`. Default true. 
+   * 
+   */
+  includeErrors?: boolean;
+   /**
+   * Buffer resources into an OpenFn Collection instead of holding them in state.
+   * Pass a collection name, or `true` for a name derived from the export.
+   */
+  collection?: string | boolean;
+  /** 
+   * Resources per write to the Collection. Default 500. 
+   */
+  batchSize?: number;
+}
 
+/**
+ * @interface CollectResult - Result for collect request
+ */
+export type CollectResult = {
+  /** 
+   * The resources, when buffering is off. Empty when they went to a Collection. 
+   */
+  resources: any[];
+  /** 
+   * OperationOutcomes for records the server could not export. 
+   */
+  issues: any[];
+  /** 
+   * The Collection the resources were written to, when buffering is on. 
+   */
+  collection?: string;
+  /** How many resources were downloaded 
+   * 
+  */
+  count: number;
+};
 /**
  * The manifest returned the FHIR server
  * @interface ExportManifest
@@ -57,7 +114,7 @@ export interface ExportManifest {
   requiresAccessToken: boolean;
   output: ExportFile[];
   error: ExportFile[];
-  deleted: ExportFile[];
+  deleted?: ExportFile[];
 }
 /**
  * @interface ManifestResponse - Collect request response
@@ -156,6 +213,7 @@ export const request = (
     headers: {
       'content-type': 'application/fhir+json',
       ...headers,
+      Prefer: 'respond-async',
     },
   };
 
@@ -210,7 +268,8 @@ export const absoluteRequest = (
     // You can add extra headers here if you want to
     headers: {
       'content-type': 'application/fhir+json',
-      ...headers,
+      ...headers
+      
     },
   };
 
@@ -225,6 +284,7 @@ export const absoluteRequest = (
  * @function
  * @param { any } stream 
  * @param {string} url 
+ * @returns void
  */
 // TODO write a unit test and fix type for stream
 export const parseNdJson = async function* (stream: any | AsyncIterable<Uint8Array<ArrayBufferLike>>, url: string = '') {
@@ -253,7 +313,7 @@ export const parseNdJson = async function* (stream: any | AsyncIterable<Uint8Arr
  * @function
  * @param {any} response
  * @param {string} url - The url for downloading NDJSON file from FHIR server
- * @returns 
+ * @returns Object
  */
 export const toManifest = (response: any, url: string): ManifestResponse => {
   const { body } = response || {};
@@ -310,3 +370,4 @@ export const sleep = (ms: number): Promise<void> => {
 export const toIsoFormat = (value: string | Date): string => {
   return value instanceof Date ? value.toISOString() : value;
 }
+

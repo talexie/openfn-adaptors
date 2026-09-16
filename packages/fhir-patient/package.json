@@ -28,6 +28,7 @@
     "configuration-schema.json"
   ],
   "dependencies": {
+    "@openfn/language-collections": "^0.9.4",
     "@openfn/language-common": "workspace:*"
   },
   "devDependencies": {
