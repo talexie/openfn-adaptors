@@ -10,6 +10,7 @@ import {
   parseNdJson,
   PollOptions,
   prepareNextState,
+  readBinaryResource,
   RequestOptions,
   sleep,
   streamFileToS3,
@@ -19,6 +20,7 @@ import {
 } from './Utils.js';
 import { DEFAULT_POLL_INTERVAL, DEFAULT_POLL_TIMEOUT, NDJSON } from './Constants.js';
 import { collections } from '@openfn/language-collections';
+import { gzip } from 'node:zlib';
 
 /**
  * State object
@@ -392,8 +394,18 @@ export async  function* streamNdJsonFile (
     parseAs: 'stream',
     auth: manifest.requiresAccessToken === true,
   });
+
+  const contentType = String(response.headers?.['content-type'] ?? '');
  
-  yield* parseNdJson(response.body, file.url);
+  // HAPI stores export output as Binary resources. Asked for JSON, it returns the
+  // Binary resource with the NDJSON base64-encoded in `data` instead of the raw file.
+  if (/json/i.test(contentType) && !/ndjson/i.test(contentType)) {
+    yield* readBinaryResource(response, file);
+    return;
+  }
+  const gzip = /gzip/i.test(String(response.headers?.['content-encoding'] ?? '')) || file.url.endsWith('.gz');
+
+  yield* parseNdJson(response.body, file.url, gzip);
 }
 
 /**

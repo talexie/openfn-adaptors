@@ -6,10 +6,11 @@ import {
   logResponse,
   throwError
 } from '@openfn/language-common/util';
-import put from '@openfn/language-aws-s3';
 
 import nodepath from 'node:path';
 import readline from 'node:readline';
+import { Readable } from 'node:stream';
+import zlib from 'node:zlib';
 
 /**
  * @interface RequestConfig - state configuration passed to the request
@@ -292,25 +293,80 @@ export const absoluteRequest = (
  * @returns void
  */
 // TODO write a unit test and fix type for stream
-export const parseNdJson = async function* (stream: any | AsyncIterable<Uint8Array<ArrayBufferLike>>, url: string = '') {
+export const parseNdJson = async function* (stream: any | AsyncIterable<Uint8Array<ArrayBufferLike>>, url: string = '',gzip:boolean = false) {
+
+  let input = toNodeStream(stream, url);
+  if (gzip) input = input.pipe(zlib.createGunzip());
   const lineReader = readline.createInterface({
-    input: stream,
+    input: toNodeStream(stream, url),
     crlfDelay: Infinity,
   });
+   let lineNumber = 0;
 
-  for await (const line of lineReader) {
+  for await (const rawLine of lineReader) {
+    lineNumber++;
+    const line = lineNumber === 1 ? rawLine.replace(/^\uFEFF/, '') : rawLine;
     if (!line.trim()) continue;
 
     try {
       yield JSON.parse(line);
-    } catch (err: any) {
+    } 
+    catch (err: any) {
       throwError('FILE_PARSING_FAILED',{
         description: "Failed to parse FHIR NDJSON file during bulk export",
-        fix: 'Check if the file is encoded as FHIR NDJSON'
+        fix: 'Check if the file is encoded as FHIR NDJSON',
+        cause: err
       })
     }
   }
 }
+
+/**
+ * Unwrap a FHIR Binary resource and read the NDJSON inside it.
+ * @param {any} response - Http response from FHIR bulk $export
+ * @param {ExportFile} file - File resource from FHIR bulk $export stream
+ * @returns AsyncGenerator
+ */
+export const readBinaryResource = async function* (response: any, file: ExportFile) {
+ 
+  const chunks: Buffer[] | any = [];
+  for await (const chunk of response.body) chunks.push(Buffer.from(chunk));
+  const text = Buffer.concat(chunks).toString('utf8');
+ 
+  let resource: any;
+  try {
+    resource = JSON.parse(text);
+  } catch (error: any) {
+    return throwError('UNEXPECTED_EXPORT_FORMAT', {
+      description: `${file.url} returned neither NDJSON nor a FHIR resource`,
+      fix: 'Check _outputFormat=application/fhir+ndjson and the Accept header on the file request',
+      url: file.url,
+      body: text.slice(0, 200),
+      cause: error,
+    });
+  }
+ 
+  if (resource?.resourceType === 'OperationOutcome') {
+    return throwError('EXPORT_FILE_ERROR', {
+      description: `${file.url} returned an OperationOutcome: ${resource.issue?.[0]?.diagnostics ?? 'no diagnostics'}`,
+      fix: 'The export file may have expired. Re-run the export.',
+      url: file.url,
+      outcome: resource,
+    });
+  }
+ 
+  if (resource?.resourceType !== 'Binary' || typeof resource.data !== 'string') {
+    return throwError('UNEXPECTED_EXPORT_FORMAT', {
+      description: `${file.url} returned a ${resource?.resourceType ?? 'non-FHIR'} resource, not NDJSON`,
+      fix: 'Check that the manifest URLs point at export files',
+      url: file.url,
+    });
+  }
+ 
+  const bytes = Buffer.from(resource.data, 'base64');
+  const gzip = /gzip/i.test(resource.contentType ?? '');
+  yield* parseNdJson(Readable.from([bytes]), file.url, gzip);
+};
 
 /**
  * Validate the manifest from FHIR server
@@ -376,9 +432,10 @@ export const toIsoFormat = (value: string | Date): string => {
   return value instanceof Date ? value.toISOString() : value;
 }
 /**
- * 
- * @param bucket 
- * @param file 
+ * Save files to AWS s3
+ * @param {string} bucket - AWS s3 bucket
+ * @param {ExportFile} file - File being streamed
+ * @returns void 
  */
 export const streamFileToS3 =(bucket: string, file: ExportFile)=>{
   /*put({
@@ -387,4 +444,33 @@ export const streamFileToS3 =(bucket: string, file: ExportFile)=>{
   })
       */
 }
-
+/**
+ * Convert the file stream to Readable
+ * @param {any} source - File Stream
+ * @param {string} url - File url representing the stream
+ * @returns Readable 
+ */
+export const toNodeStream = (source: any, url: string): Readable => {
+  if (typeof source === 'string' || Buffer.isBuffer(source)) return Readable.from([source]);
+ 
+  if (source instanceof Readable) return source;
+  if (typeof source?.on === 'function' && typeof source?.pipe === 'function') return source;
+ 
+  if (typeof source?.getReader === 'function') return Readable.fromWeb(source);
+ 
+  if (typeof source?.[Symbol.asyncIterator] === 'function') return Readable.from(source);
+ 
+  return throwError('INVALID_NDJSON_SOURCE', {
+    description: `Cannot read NDJSON from a ${describe(source)}${url ? ` (${url})` : ''}`,
+    fix:
+      'Pass the response body, not state: streamNdJsonFile(state, file, manifest, options). ' +
+      "If you are calling request() yourself, set parseAs: 'stream'.",
+    url,
+  });
+};
+ 
+const describe = (value: any): string => {
+  if (value === null || value === undefined) return String(value);
+  if (value?.configuration || value?.data) return 'state object';
+  return Array.isArray(value) ? 'array' : typeof value;
+};
