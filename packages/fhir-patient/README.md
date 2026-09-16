@@ -30,9 +30,47 @@ Build the project using `pnpm build`.
 
 To build _only_ the docs run `pnpm build docs`.
 
+## FHIR Documentation
+
+The Restfull API can be seen here: https://www.hl7.org/fhir/http.html
+
+### FHIR Bulk Export Documentation
+
+The Bulk $export API can be found here: https://build.fhir.org/ig/HL7/bulk-data/en/async.html
+
+### Important tips for Asynchronicity
+To solve asynchronicity required by the Bulk $export API, Add header 'Prefer: respond-async' to FHIR KickOff request for Bulk $export 
+```js
+    downloadResource('Patient/DPW902300',{}, { 
+        Prefer: 'respond-async'
+    });
+```
 ## Examples
 - Create a tmp folder in the folder packages/fhir-patient and add file "fhir-cred.json"
 - Run this command
- ```
+ ```code
  openfn examples/workflow.json -m -o tmp/output.json
  ```
+
+## Workflow Example
+```js
+downloadResource('Patient/DPW902300',{}, { 
+    pollInterval: 1 
+});
+
+fn(state =>{
+    each(
+        state.data,
+        (v)=>{
+            // Send data to collections or AWS S3 storage or long-term storage
+            put({
+                bucket: 'openfn-test',
+                key: v.file.url,
+                body: v.file.url,
+                contentType: 'application/fhir+ndjson'
+            });
+        }
+    )
+    return  state;
+});
+```
