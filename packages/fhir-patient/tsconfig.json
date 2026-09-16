@@ -1,0 +1,13 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "module": "NodeNext",
+        "types": ["mocha", "node"] 
+    },
+    "include": [
+        "src/**/*",
+        "test/**/*",      
+        "**/*.test.ts",
+        "**/*.spec.ts"
+    ]
+}
